@@ -1,0 +1,9 @@
+{
+  "name": "ConfigForge",
+  "short_name": "ConfigForge",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#f8fafc",
+  "theme_color": "#155e75",
+  "icons": []
+}

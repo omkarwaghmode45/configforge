@@ -1,0 +1,170 @@
+{
+  "app": {
+    "name": "ConfigForge CRM",
+    "defaultLocale": "en",
+    "locales": {
+      "en": {
+        "app.subtitle": "Config-driven CRM generated from JSON",
+        "label.language": "Language",
+        "nav.dashboard": "Dashboard",
+        "nav.customers": "Customers",
+        "nav.deals": "Deals",
+        "nav.products": "Products",
+        "nav.orders": "Orders",
+        "nav.notifications": "Notifications",
+        "auth.signin": "Sign in",
+        "auth.signup": "Create account",
+        "auth.signout": "Sign out",
+        "auth.demo": "Use demo login",
+        "btn.continue": "Continue",
+        "btn.create": "Create",
+        "btn.edit": "Edit",
+        "btn.delete": "Delete",
+        "btn.save": "Save",
+        "btn.cancel": "Cancel",
+        "table.empty": "No records yet",
+        "table.no_columns": "No table columns configured",
+        "form.no_fields": "This entity has no fields configured yet",
+        "form.select": "Select...",
+        "field.unsupported": "This field type is not supported by the current component map.",
+        "field.unsupported_type": "Unsupported field type",
+        "validation.required": "is required",
+        "state.loading_records": "Loading records",
+        "state.saving": "Saving...",
+        "page.dashboard": "Dashboard",
+        "screen.unknown": "Unknown screen",
+        "entity.unknown": "Unknown entity",
+        "entity.missing": "This entity is missing from config.",
+        "widget.unsupported": "Unsupported widget",
+        "notifications.empty": "No notifications yet",
+        "csv.upload": "Upload CSV",
+        "csv.imported": "Imported rows:",
+        "csv.failed": "failed",
+        "error.auth": "Authentication failed",
+        "error.load": "Could not load data",
+        "error.submit": "Submit failed"
+      },
+      "hi": {
+        "app.subtitle": "JSON से बना config-driven CRM",
+        "label.language": "भाषा",
+        "nav.dashboard": "डैशबोर्ड",
+        "nav.customers": "ग्राहक",
+        "nav.deals": "डील",
+        "nav.products": "उत्पाद",
+        "nav.orders": "ऑर्डर",
+        "nav.notifications": "सूचनाएं",
+        "auth.signin": "साइन इन",
+        "auth.signup": "खाता बनाएं",
+        "auth.signout": "साइन आउट",
+        "auth.demo": "डेमो लॉगिन",
+        "btn.continue": "जारी रखें",
+        "btn.create": "बनाएं",
+        "btn.edit": "संपादित करें",
+        "btn.delete": "हटाएं",
+        "btn.save": "सेव करें",
+        "btn.cancel": "रद्द करें",
+        "table.empty": "कोई रिकॉर्ड नहीं",
+        "table.no_columns": "कोई टेबल कॉलम configured नहीं है",
+        "form.no_fields": "इस entity के लिए कोई fields configured नहीं हैं",
+        "form.select": "चुनें...",
+        "field.unsupported": "यह field type current component map में supported नहीं है.",
+        "field.unsupported_type": "Unsupported field type",
+        "validation.required": "ज़रूरी है",
+        "state.loading_records": "रिकॉर्ड लोड हो रहे हैं",
+        "state.saving": "सेव हो रहा है...",
+        "page.dashboard": "डैशबोर्ड",
+        "screen.unknown": "अज्ञात स्क्रीन",
+        "entity.unknown": "अज्ञात entity",
+        "entity.missing": "यह entity config में नहीं है.",
+        "widget.unsupported": "Unsupported widget",
+        "notifications.empty": "अभी कोई सूचना नहीं",
+        "csv.upload": "CSV अपलोड करें",
+        "csv.imported": "Import हुए rows:",
+        "csv.failed": "failed",
+        "error.auth": "Authentication failed",
+        "error.load": "डेटा लोड नहीं हो सका",
+        "error.submit": "Submit failed"
+      }
+    }
+  },
+  "auth": {
+    "enabled": true,
+    "methods": ["email", "demo"],
+    "fields": [
+      { "name": "email", "label": { "en": "Email", "hi": "ईमेल" }, "type": "email", "required": true },
+      { "name": "password", "label": { "en": "Password", "hi": "पासवर्ड" }, "type": "password", "required": true }
+    ]
+  },
+  "entities": [
+    {
+      "name": "products",
+      "label": { "en": "Products", "hi": "उत्पाद" },
+      "fields": [
+        { "name": "name", "type": "text", "label": { "en": "Product Name", "hi": "उत्पाद नाम" } },
+        { "name": "price", "type": "number", "label": { "en": "Price", "hi": "कीमत" } },
+        { "name": "category", "type": "text", "label": { "en": "Category", "hi": "श्रेणी" } },
+        { "name": "brand", "type": "text", "label": { "en": "Brand", "hi": "ब्रांड" } }
+      ]
+    },
+    {
+      "name": "orders",
+      "label": { "en": "Orders", "hi": "ऑर्डर" },
+      "fields": [
+        { "name": "orderId", "type": "text", "label": { "en": "Order ID", "hi": "ऑर्डर ID" } },
+        { "name": "amount", "type": "number", "label": { "en": "Amount", "hi": "राशि" } }
+      ]
+    },
+    {
+      "name": "customers",
+      "label": { "en": "Customers", "hi": "ग्राहक" },
+      "userScoped": true,
+      "fields": [
+        { "name": "name", "label": { "en": "Name", "hi": "नाम" }, "type": "text", "required": true },
+        { "name": "email", "label": { "en": "Email", "hi": "ईमेल" }, "type": "email" },
+        { "name": "company", "label": { "en": "Company", "hi": "कंपनी" }, "type": "text" },
+        { "name": "status", "label": { "en": "Status", "hi": "स्थिति" }, "type": "select", "default": "Lead", "options": ["Lead", "Active", "Churned"] },
+        { "name": "notes", "label": { "en": "Notes", "hi": "नोट्स" }, "type": "textarea" }
+      ]
+    },
+    {
+      "name": "deals",
+      "label": { "en": "Deals", "hi": "डील" },
+      "userScoped": true,
+      "fields": [
+        { "name": "title", "label": { "en": "Title", "hi": "शीर्षक" }, "type": "text", "required": true },
+        { "name": "value", "label": { "en": "Value", "hi": "मूल्य" }, "type": "number", "default": 0 },
+        { "name": "stage", "label": { "en": "Stage", "hi": "स्टेज" }, "type": "select", "default": "Pipeline", "options": ["Pipeline", "Negotiation", "Won", "Lost"] },
+        { "name": "closeDate", "label": { "en": "Close Date", "hi": "समाप्ति तारीख" }, "type": "date" }
+      ]
+    }
+  ],
+  "ui": {
+    "navigation": [
+      { "labelKey": "nav.dashboard", "view": "dashboard" },
+      { "labelKey": "nav.customers", "entity": "customers" },
+      { "labelKey": "nav.deals", "entity": "deals" },
+      { "labelKey": "nav.products", "entity": "products" },
+      { "labelKey": "nav.orders", "entity": "orders" },
+      { "labelKey": "nav.notifications", "view": "notifications" }
+    ],
+    "views": [
+      {
+        "type": "dashboard",
+        "title": { "en": "Overview", "hi": "ओवरव्यू" },
+        "widgets": [
+          { "type": "metric", "entity": "customers", "label": { "en": "Customers", "hi": "ग्राहक" } },
+          { "type": "metric", "entity": "deals", "label": { "en": "Deals", "hi": "डील" } },
+          { "type": "table", "entity": "deals", "label": { "en": "Recent deals", "hi": "हाल की डील" }, "limit": 5 }
+        ]
+      }
+    ]
+  },
+  "notifications": {
+    "enabled": true,
+    "rules": [
+      { "event": "customers.created", "message": "New customer added", "email": true },
+      { "event": "deals.created", "message": "New deal created", "email": true },
+      { "event": "csv.imported", "message": "CSV import completed", "email": false }
+    ]
+  }
+}

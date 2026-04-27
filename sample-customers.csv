@@ -1,0 +1,4 @@
+name,email,company,status,notes
+Ada Lovelace,ada@example.com,Analytical Engines,Active,First imported customer
+Grace Hopper,grace@example.com,Compiler Labs,Lead,CSV import demo
+Broken Email,not-an-email,Invalid Co,Lead,This row should fail validation

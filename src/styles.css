@@ -1,0 +1,94 @@
+:root {
+  color: #18212f;
+  background: #f6f8fb;
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
+* { box-sizing: border-box; }
+body { margin: 0; min-width: 320px; }
+button, input, select, textarea { font: inherit; }
+button {
+  border: 1px solid #cbd5e1;
+  background: #ffffff;
+  color: #18212f;
+  border-radius: 8px;
+  min-height: 40px;
+  padding: 0 14px;
+  cursor: pointer;
+}
+button.primary, button.active { background: #0f766e; border-color: #0f766e; color: white; }
+
+.shell { display: grid; grid-template-columns: 280px 1fr; min-height: 100vh; }
+.sidebar {
+  background: #102a43;
+  color: white;
+  padding: 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+.sidebar h1 { font-size: 24px; margin: 0 0 6px; }
+.sidebar p { color: #cbd5e1; margin: 0; line-height: 1.5; }
+.sidebar nav { display: grid; gap: 10px; }
+.sidebar nav button { text-align: left; border-color: rgba(255,255,255,.14); background: rgba(255,255,255,.06); color: white; }
+.sidebarFooter { margin-top: auto; display: grid; gap: 10px; }
+main { padding: 28px; overflow: auto; }
+
+.authPage, .state {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+}
+.authPanel, .modal, .panel {
+  background: white;
+  border: 1px solid #dbe3ef;
+  border-radius: 8px;
+  box-shadow: 0 16px 40px rgba(15, 23, 42, 0.08);
+}
+.authPanel { width: min(460px, 100%); padding: 28px; display: grid; gap: 14px; }
+.authPanel h1, h2, h3 { margin: 0; }
+.authPanel p { color: #64748b; margin: 0; }
+.segmented { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+
+.stack { display: grid; gap: 18px; }
+.row { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.row.end { justify-content: flex-end; }
+.widgetGrid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+.panel { padding: 18px; }
+.panel.wide { grid-column: 1 / -1; }
+.metric { display: grid; gap: 8px; }
+.metric strong { font-size: 42px; color: #0f766e; }
+
+label { display: grid; gap: 7px; font-weight: 650; color: #334155; }
+input, select, textarea {
+  width: 100%;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  min-height: 42px;
+  padding: 9px 11px;
+  background: white;
+}
+textarea { min-height: 96px; resize: vertical; }
+.dynamicForm { display: grid; gap: 14px; }
+.fieldGroup { display: grid; gap: 6px; }
+.fieldError { color: #b42318; font-size: 13px; }
+.fieldWarning { color: #92400e; font-size: 13px; }
+.error { color: #b42318; background: #fff1f0; padding: 10px 12px; border-radius: 8px; }
+.empty { padding: 28px; border: 1px dashed #cbd5e1; border-radius: 8px; background: white; color: #64748b; }
+.tableWrap { overflow-x: auto; background: white; border: 1px solid #dbe3ef; border-radius: 8px; }
+table { width: 100%; border-collapse: collapse; min-width: 620px; }
+th, td { padding: 13px 14px; border-bottom: 1px solid #e2e8f0; text-align: left; }
+th { color: #475569; font-size: 13px; background: #f8fafc; }
+.importBar { display: flex; align-items: center; gap: 12px; background: white; border: 1px solid #dbe3ef; border-radius: 8px; padding: 12px; }
+.modalBackdrop { position: fixed; inset: 0; display: grid; place-items: center; padding: 20px; background: rgba(15, 23, 42, .38); }
+.modal { width: min(560px, 100%); max-height: 90vh; overflow: auto; padding: 22px; display: grid; gap: 14px; }
+
+@media (max-width: 760px) {
+  .shell { grid-template-columns: 1fr; }
+  .sidebar { position: static; padding: 18px; }
+  .sidebar nav { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  main { padding: 18px; }
+  .widgetGrid { grid-template-columns: 1fr; }
+  .row { align-items: stretch; flex-direction: column; }
+}
