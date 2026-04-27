@@ -1,6 +1,3 @@
-app.get("/", (req, res) => {
-  res.send("Server is running 🚀");
-});
 import cors from "cors";
 import express from "express";
 import fs from "fs";
@@ -13,11 +10,27 @@ import { findEntity } from "./config";
 import { emitEvent } from "./notifications";
 import type { AppConfig, EntityConfig, FieldConfig } from "./types";
 import { coerceAndValidate } from "./validation";
-
 const app = express();
+
+app.get("/", (req, res) => {
+  res.send("Server is running 🚀");
+});
+
+app.get("/api/config", (req, res) => {
+  try {
+    const configPath = path.resolve("config/app.config.json");
+    const raw = fs.readFileSync(configPath, "utf-8");
+    const config = JSON.parse(raw);
+
+    res.json(config);
+  } catch (err) {
+    console.error("Error loading config:", err);
+    res.status(500).json({ error: "Failed to load config" });
+  }
+});
+
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 2 * 1024 * 1024 } });
 const port = Number(process.env.PORT || 4000);
-
 let config = readConfigFile();
 const db = new Database(config);
 
