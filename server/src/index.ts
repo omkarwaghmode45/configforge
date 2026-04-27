@@ -1,3 +1,6 @@
+app.get("/", (req, res) => {
+  res.send("Server is running 🚀");
+});
 import cors from "cors";
 import express from "express";
 import fs from "fs";
