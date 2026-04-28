@@ -1,4 +1,4 @@
-import { type FormEvent, type ReactElement, useEffect, useMemo, useState } from "react";
+import { type FormEvent, type ReactElement, useCallback, useEffect, useMemo, useState } from "react";
 import { api } from "./api";
 import type { AppConfig, EntityConfig, FieldConfig, Session } from "./types";
 
@@ -12,11 +12,29 @@ const languageNames: Record<string, string> = {
   hi: "हिन्दी"
 };
 
+const LOCALE_STORAGE_KEY = "configforge.locale";
+
 const savedSession = () => {
   try {
-    return JSON.parse(localStorage.getItem("configforge.session") || "null") as Session | null;
+    return JSON.parse(localStorage.getItem("session") || "null") as Session | null;
   } catch {
     return null;
+  }
+};
+
+const getStoredLocale = () => {
+  try {
+    return localStorage.getItem(LOCALE_STORAGE_KEY);
+  } catch {
+    return null;
+  }
+};
+
+const storeLocale = (locale: string) => {
+  try {
+    localStorage.setItem(LOCALE_STORAGE_KEY, locale);
+  } catch {
+    // Ignore storage failures and continue with in-memory locale state.
   }
 };
 
@@ -40,20 +58,63 @@ function useConfig() {
 
 function App() {
   const { config, error } = useConfig();
-  const [session, setSession] = useState<Session | null>(savedSession);
+  const [session, setSession] = useState<Session | null>(() => savedSession());
   const [screen, setScreen] = useState<Screen>({ kind: "dashboard" });
-  const [lang, setLang] = useState("en");
+  const [lang, setLang] = useState(() => getStoredLocale() || "en");
+  const localeKeys = useMemo(() => Object.keys(config?.app?.locales || { en: {} }), [config?.app?.locales]);
 
   useEffect(() => {
-    if (config?.app?.defaultLocale) setLang(config.app.defaultLocale);
-  }, [config?.app?.defaultLocale]);
+    if (!config || !localeKeys.length) return;
+
+    const storedLocale = getStoredLocale();
+    const defaultLocale = config.app?.defaultLocale;
+
+    if (storedLocale && localeKeys.includes(storedLocale)) {
+      if (storedLocale !== lang) setLang(storedLocale);
+      return;
+    }
+
+    if (localeKeys.includes(lang)) return;
+
+    const nextLocale = (defaultLocale && localeKeys.includes(defaultLocale)) ? defaultLocale : localeKeys[0];
+    if (!nextLocale) return;
+    setLang(nextLocale);
+    storeLocale(nextLocale);
+  }, [config, lang, localeKeys]);
+
+  const localeStrings = useMemo(() => {
+    if (!config?.app?.locales) return {} as Record<string, string>;
+    const selected = config.app.locales[lang];
+    if (selected) return selected;
+
+    const defaultLocale = config.app.defaultLocale;
+    if (defaultLocale && config.app.locales[defaultLocale]) return config.app.locales[defaultLocale];
+
+    return {} as Record<string, string>;
+  }, [config?.app?.defaultLocale, config?.app?.locales, lang]);
 
   console.log("Current language:", lang);
 
-  const t: TFunction = (key, fallback = key) => config?.app?.locales?.[lang]?.[key] || fallback;
+  const t: TFunction = (key, fallback = key) => localeStrings[key] || fallback;
   const labelFor = (value: unknown, fallback: string) => resolveLabel(value, lang, fallback);
   const entities = config?.entities || [];
   const navigationItems = useMemo(() => buildNavigation(config, entities), [config, entities]);
+  // Toast system
+  const [toasts, setToasts] = useState<Array<{ id: string; type: "success" | "error"; message: string }>>([]);
+  const pushToast = (type: "success" | "error", message: string) => {
+    const id = `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+    setToasts((s) => [...s, { id, type, message }]);
+    setTimeout(() => setToasts((s) => s.filter((t) => t.id !== id)), 3500);
+  };
+  const toast = {
+    success: (msg: string) => pushToast("success", msg),
+    error: (msg: string) => pushToast("error", msg),
+  };
+
+  function handleLocaleChange(nextLocale: string) {
+    setLang(nextLocale);
+    storeLocale(nextLocale);
+  }
 
   useEffect(() => {
     if (!config) return;
@@ -65,16 +126,30 @@ function App() {
 
   function persist(next: Session | null) {
     setSession(next);
-    if (next) localStorage.setItem("configforge.session", JSON.stringify(next));
-    else localStorage.removeItem("configforge.session");
+    if (next) localStorage.setItem("session", JSON.stringify(next));
+    else localStorage.removeItem("session");
   }
 
   if (error) return <State title="Configuration failed" detail={error} />;
   if (!config) return <State title="Loading app runtime" detail="Reading JSON configuration..." />;
-  if (!session && config.auth?.enabled !== false) return <Auth config={config} lang={lang} onSession={persist} t={t} />;
+  // If authentication is enabled, require explicit login/signup.
+  if (config.auth?.enabled !== false) {
+    if (!session) {
+      // Ensure URL shows /login when unauthenticated
+      if (window.location.pathname !== "/login") {
+        window.history.replaceState(null, "", "/login");
+      }
+      return <Auth config={config} lang={lang} onSession={persist} t={t} />;
+    }
+    // If the user is authenticated but currently on /login, redirect to root
+    if (session && window.location.pathname === "/login") {
+      window.history.replaceState(null, "", "/");
+    }
+  }
 
   return (
     <div className="shell">
+      <Toasts toasts={toasts} />
       <aside className="sidebar">
         <div>
           <h1>{config.app?.name || "ConfigForge"}</h1>
@@ -88,19 +163,21 @@ function App() {
           ))}
         </nav>
         <div className="sidebarFooter">
-          <select value={lang} onChange={(event) => setLang(event.target.value)} aria-label={t("label.language")}>
-            {Object.keys(config.app?.locales || { en: {} }).map((item) => (
-              <option key={item} value={item}>
-                {languageNames[item] || item}
-              </option>
-            ))}
-          </select>
+          {localeKeys.length > 1 && (
+            <select value={lang} onChange={(event) => handleLocaleChange(event.target.value)} aria-label={t("label.language")}>
+              {localeKeys.map((item) => (
+                <option key={item} value={item}>
+                  {languageNames[item] || item}
+                </option>
+              ))}
+            </select>
+          )}
           <button onClick={() => persist(null)}>{t("auth.signout")}</button>
         </div>
       </aside>
       <main>
         {screen.kind === "dashboard" && <Dashboard config={config} entities={entities} session={session} lang={lang} t={t} />}
-        {screen.kind === "entity" && <DynamicEntityPage entity={entities.find((item) => item.name === screen.entity)} session={session} lang={lang} t={t} />}
+        {screen.kind === "entity" && <DynamicEntityPage entity={entities.find((item) => item.name === screen.entity)} session={session} lang={lang} t={t} toast={toast} />}
         {screen.kind === "notifications" && <Notifications session={session} t={t} />}
       </main>
     </div>
@@ -130,6 +207,18 @@ function buildNavigation(config: AppConfig | null, entities: EntityConfig[]): Na
     ...generatedEntityItems,
     ...(hasNotifications ? [] : [{ labelKey: "nav.notifications", view: "notifications", path: "/notifications" }])
   ];
+}
+
+function Toasts({ toasts }: { toasts: Array<{ id: string; type: "success" | "error"; message: string }> }) {
+  return (
+    <div className="toasts">
+      {toasts.map((t) => (
+        <div key={t.id} className={`toast ${t.type}`}>
+          {t.message}
+        </div>
+      ))}
+    </div>
+  );
 }
 
 function routeToScreen(entities: EntityConfig[]): Screen {
@@ -216,15 +305,18 @@ function Widget({ widget, entity, session, lang, t }: { widget: Record<string, u
   return <section className="panel">{t("widget.unsupported")}: {String(widget.type || "unknown")}</section>;
 }
 
-function DynamicEntityPage({ entity, session, lang, t }: { entity?: EntityConfig; session: Session | null; lang: string; t: TFunction }) {
+function DynamicEntityPage({ entity, session, lang, t, toast }: { entity?: EntityConfig; session: Session | null; lang: string; t: TFunction; toast?: { success: (msg: string) => void; error: (msg: string) => void } }) {
   const [items, setItems] = useState<Record<string, unknown>[]>([]);
   const [editing, setEditing] = useState<Record<string, unknown> | null>(null);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [confirming, setConfirming] = useState<{ id: string } | null>(null);
 
-  async function load() {
+  const load = useCallback(async () => {
     if (!entity) return;
     setLoading(true);
+    setError("");
     try {
       const data = await api<{ items: Record<string, unknown>[] }>(`/api/entities/${entity.name}`, {}, session);
       setItems(data.items);
@@ -233,9 +325,9 @@ function DynamicEntityPage({ entity, session, lang, t }: { entity?: EntityConfig
     } finally {
       setLoading(false);
     }
-  }
+  }, [entity, session, t]);
 
-  useEffect(() => { load(); }, [entity?.name]);
+  useEffect(() => { void load(); }, [load]);
   if (!entity) return <State title={t("screen.unknown")} detail={t("entity.missing")} />;
 
   const entityLabel = resolveLabel(entity.label, lang, entity.name);
@@ -253,14 +345,62 @@ function DynamicEntityPage({ entity, session, lang, t }: { entity?: EntityConfig
           t={t}
           submitKey="btn.create"
           onSubmit={async (values) => {
-            await api(`/api/${entity.name}`, { method: "POST", body: JSON.stringify(values) }, session);
+            const created = await api<{ item: Record<string, unknown> }>(`/api/entities/${entity.name}`, { method: "POST", body: JSON.stringify(values) }, session);
+            setItems((prev) => [created.item, ...prev]);
             await load();
           }}
         />
       </section>
       <CsvImport entity={entity} session={session} onDone={load} t={t} />
       {error && <p className="error">{error}</p>}
-      {loading ? <State title={t("state.loading_records")} /> : <DataTable entity={entity} items={items} onEdit={setEditing} lang={lang} t={t} />}
+      {loading ? (
+        <State title={t("state.loading_records")} />
+      ) : (
+        <>
+          <DataTable
+            entity={entity}
+            items={items}
+            onEdit={setEditing}
+            onDelete={(id: string) => setConfirming({ id })}
+            deletingId={deletingId}
+            lang={lang}
+            t={t}
+          />
+
+          {confirming && (
+            <div className="modalBackdrop">
+              <section className="modal">
+                <h3>{t("btn.delete")} {entityLabel}</h3>
+                <p>{t("confirm.delete", `Are you sure you want to delete this ${entityLabel}?`)}</p>
+                <div className="row end">
+                  <button onClick={() => setConfirming(null)}>{t("btn.cancel")}</button>
+                  <button
+                    className="danger"
+                    onClick={async () => {
+                      const id = confirming.id;
+                      setConfirming(null);
+                      setDeletingId(id);
+                      try {
+                        await api(`/api/entities/${entity.name}/${id}`, { method: "DELETE" }, session);
+                        setItems((prev) => prev.filter((it) => String(it.id) !== String(id)));
+                        toast?.success(t("toast.deleted", "Item deleted successfully"));
+                      } catch (err) {
+                        const msg = err instanceof Error ? err.message : t("toast.delete_failed", "Delete failed");
+                        toast?.error(msg);
+                      } finally {
+                        setDeletingId(null);
+                      }
+                    }}
+                    disabled={deletingId !== null}
+                  >
+                    {deletingId !== null ? t("state.saving") : t("btn.delete")}
+                  </button>
+                </div>
+              </section>
+            </div>
+          )}
+        </>
+      )}
       {editing && <EntityForm entity={entity} item={editing} session={session} lang={lang} t={t} onClose={() => setEditing(null)} onSaved={() => { setEditing(null); load(); }} />}
     </div>
   );
@@ -383,7 +523,7 @@ function DynamicFieldInput({ field, value, onChange, lang, t, error }: { field: 
   return <div className="fieldGroup"><InputComponent field={field} value={value} onChange={onChange} label={label} t={t} />{error && <span className="fieldError">{error}</span>}</div>;
 }
 
-function DataTable({ entity, items, lang, t, onEdit }: { entity: EntityConfig; items: Record<string, unknown>[]; lang: string; t: TFunction; onEdit?: (item: Record<string, unknown>) => void }) {
+function DataTable({ entity, items, lang, t, onEdit, onDelete, deletingId }: { entity: EntityConfig; items: Record<string, unknown>[]; lang: string; t: TFunction; onEdit?: (item: Record<string, unknown>) => void; onDelete?: (id: string) => void; deletingId?: string | null }) {
   const fields = entity.fields || [];
   console.log("[ConfigForge] table fields", entity.name, fields);
   if (!fields.length) return <section className="empty">{t("table.no_columns")}</section>;
@@ -396,7 +536,7 @@ function DataTable({ entity, items, lang, t, onEdit }: { entity: EntityConfig; i
             {fields.map((field) => (
               <th key={field.name}>{resolveLabel(field.label, lang, field.name)}</th>
             ))}
-            {onEdit && <th />}
+            {(onEdit || onDelete) && <th />}
           </tr>
         </thead>
         <tbody>
@@ -405,7 +545,21 @@ function DataTable({ entity, items, lang, t, onEdit }: { entity: EntityConfig; i
               {fields.map((field) => (
                 <td key={field.name}>{String(item[field.name] ?? "")}</td>
               ))}
-              {onEdit && <td><button onClick={() => onEdit(item)}>{t("btn.edit")}</button></td>}
+              {(onEdit || onDelete) && (
+                <td>
+                  {onEdit && <button onClick={() => onEdit(item)}>{t("btn.edit")}</button>}
+                  {onDelete && (
+                    <button
+                      className="danger"
+                      style={{ marginLeft: 8 }}
+                      onClick={() => onDelete(String(item.id))}
+                      disabled={deletingId !== null && String(deletingId) === String(item.id)}
+                    >
+                      {deletingId !== null && String(deletingId) === String(item.id) ? t("state.saving") : t("btn.delete")}
+                    </button>
+                  )}
+                </td>
+              )}
             </tr>
           ))}
         </tbody>

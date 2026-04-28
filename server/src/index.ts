@@ -16,25 +16,22 @@ app.get("/", (req, res) => {
   res.send("Server is running 🚀");
 });
 
-app.get("/api/config", (req, res) => {
-  try {
-    const configPath = path.resolve("config/app.config.json");
-    const raw = fs.readFileSync(configPath, "utf-8");
-    const config = JSON.parse(raw);
 
-    res.json(config);
-  } catch (err) {
-    console.error("Error loading config:", err);
-    res.status(500).json({ error: "Failed to load config" });
-  }
-});
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 2 * 1024 * 1024 } });
 const port = Number(process.env.PORT || 4000);
 let config = readConfigFile();
 const db = new Database(config);
 
-app.use(cors({ origin: process.env.CLIENT_ORIGIN || true, credentials: true }));
+app.use(cors({
+  origin: [
+    "http://localhost:5173",
+    "http://localhost:5174",
+    "https://configforge-six.vercel.app"
+  ],
+  methods: ["GET", "POST", "PUT", "DELETE"],
+  credentials: true
+}));
 app.use(express.json({ limit: "1mb" }));
 
 app.get("/api/health", (_req, res) => {
@@ -146,7 +143,10 @@ app.post("/api/:entity", requireAuth, async (req, res) => {
 
 const staticDir = path.resolve(process.cwd(), "dist");
 app.use(express.static(staticDir));
-app.use((_req, res) => {
+
+// Prevent API routes from being overridden by frontend fallback
+app.use((req, res, next) => {
+  if (req.path.startsWith("/api")) return next();
   res.sendFile(path.join(staticDir, "index.html"));
 });
 
