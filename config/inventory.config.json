@@ -1,10 +1,10 @@
 {
   "app": {
-    "name": "Generated App",
+    "name": "Inventory App",
     "defaultLocale": "en",
     "locales": {
       "en": {
-        "app.subtitle": "A JSON-driven app generator that can render any configured entity.",
+        "app.subtitle": "A focused inventory tracker generated from JSON.",
         "label.language": "Language",
         "nav.entities": "Entities",
         "nav.notifications": "Notifications",
@@ -51,9 +51,9 @@
         "ui.hide_password": "Hide password"
       },
       "hi": {
-        "app.subtitle": "JSON-driven app generator जो किसी भी configured entity को render कर सकता है.",
+        "app.subtitle": "एक फ़ोकस्ड इन्वेंटरी ट्रैकर जो JSON से जनरेट किया गया है.",
         "label.language": "भाषा",
-        "nav.entities": "संस्थाएं",
+        "nav.entities": "Entities",
         "nav.notifications": "सूचनाएं",
         "auth.signin": "साइन इन",
         "auth.signup": "खाता बनाएं",
@@ -101,24 +101,13 @@
   },
   "auth": {
     "enabled": true,
-    "methods": ["password", "otp"],
+    "methods": ["email"],
     "fields": [
-      { "name": "email", "label": { "en": "Email", "hi": "ईमेल" }, "type": "email", "required": true },
-      { "name": "password", "label": { "en": "Password", "hi": "पासवर्ड" }, "type": "password", "required": true }
+      { "name": "email", "label": "Email", "type": "email", "required": true },
+      { "name": "password", "label": "Password", "type": "password", "required": true }
     ]
   },
   "entities": [
-    {
-      "key": "tasks",
-      "name": { "en": "Tasks", "hi": "टास्क" },
-      "fields": [
-        { "name": "title", "type": "text", "label": { "en": "Title", "hi": "शीर्षक" }, "required": true },
-        { "name": "status", "type": "select", "label": { "en": "Status", "hi": "स्थिति" }, "default": "Todo", "options": [{ "value": "Todo", "label": { "en": "Todo", "hi": "करना है" } }, { "value": "In Progress", "label": { "en": "In Progress", "hi": "प्रगति में" } }, { "value": "Done", "label": { "en": "Done", "hi": "पूर्ण" } }] },
-        { "name": "priority", "type": "select", "label": { "en": "Priority", "hi": "प्राथमिकता" }, "default": "Medium", "options": [{ "value": "Low", "label": { "en": "Low", "hi": "कम" } }, { "value": "Medium", "label": { "en": "Medium", "hi": "मध्यम" } }, { "value": "High", "label": { "en": "High", "hi": "अधिक" } }] },
-        { "name": "dueDate", "type": "date", "label": { "en": "Due Date", "hi": "नियत तारीख" } },
-        { "name": "notes", "type": "textarea", "label": { "en": "Notes", "hi": "नोट्स" } }
-      ]
-    },
     {
       "key": "inventory",
       "name": { "en": "Inventory", "hi": "इन्वेंटरी" },
@@ -141,9 +130,8 @@
         "type": "dashboard",
         "title": { "en": "Entities", "hi": "Entities" },
         "widgets": [
-          { "type": "metric", "entity": "tasks", "label": { "en": "Tasks", "hi": "टास्क" } },
           { "type": "metric", "entity": "inventory", "label": { "en": "Inventory", "hi": "इन्वेंटरी" } },
-          { "type": "table", "entity": "tasks", "label": { "en": "Recent records", "hi": "हाल के रिकॉर्ड" }, "limit": 5 }
+          { "type": "table", "entity": "inventory", "label": { "en": "Recent records", "hi": "हाल के रिकॉर्ड" }, "limit": 5 }
         ]
       }
     ]
@@ -151,7 +139,6 @@
   "notifications": {
     "enabled": true,
     "rules": [
-      { "event": "tasks.created", "message": { "en": "New task added", "hi": "नया टास्क जोड़ा गया" }, "email": true },
       { "event": "inventory.created", "message": { "en": "New inventory item added", "hi": "नया इन्वेंटरी आइटम जोड़ा गया" }, "email": true },
       { "event": "csv.imported", "message": { "en": "CSV import completed", "hi": "CSV आयात पूरा हुआ" }, "email": false }
     ]

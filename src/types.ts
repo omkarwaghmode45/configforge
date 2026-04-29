@@ -4,11 +4,12 @@ export interface FieldConfig {
   type: string;
   required?: boolean;
   default?: unknown;
-  options?: string[];
+  options?: Array<string | { value: string; label?: string | Record<string, string> }>;
 }
 
 export interface EntityConfig {
-  name: string;
+  key?: string;
+  name: string | Record<string, string>;
   label?: string | Record<string, string>;
   userScoped?: boolean;
   fields: FieldConfig[];

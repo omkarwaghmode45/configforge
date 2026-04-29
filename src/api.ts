@@ -1,6 +1,12 @@
 import type { Session } from "./types";
 
-const API_BASE = (import.meta.env.VITE_API_BASE || "http://localhost:4000").replace(/\/+$/, "");
+const API_BASE = (import.meta.env.VITE_API_BASE || "http://localhost:10000").replace(/\/+$/, "");
+const DEFAULT_CONFIG_KEY = "app";
+
+function getActiveConfigKey() {
+  if (typeof window === "undefined") return DEFAULT_CONFIG_KEY;
+  return new URLSearchParams(window.location.search).get("config") || DEFAULT_CONFIG_KEY;
+}
 
 export async function api<T>(
   path: string,
@@ -18,19 +24,38 @@ export async function api<T>(
     headers.set("Authorization", `Bearer ${session.token}`);
   }
 
-  const response = await fetch(`${API_BASE}${path}`, {
-    ...options,
-    headers,
-  });
+  const url = new URL(`${API_BASE}${path}`);
+  const configKey = getActiveConfigKey();
+  if (configKey && configKey !== DEFAULT_CONFIG_KEY) {
+    url.searchParams.set("config", configKey);
+  }
+
+  let response: Response;
+  try {
+    response = await fetch(url.toString(), {
+      ...options,
+      headers,
+    });
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : "Network request failed";
+    throw new Error(`Unable to reach API at ${API_BASE}${path}: ${detail}`);
+  }
 
   if (!response.ok) {
-    const payload = await response.json().catch(() => null);
-    if (payload && typeof payload === "object" && "error" in payload) {
-      throw new Error(String((payload as { error: unknown }).error || `Request failed (${response.status})`));
+    const raw = await response.text().catch(() => "");
+    let message = raw;
+    if (raw) {
+      try {
+        const payload = JSON.parse(raw) as Record<string, unknown>;
+        if (payload && typeof payload === "object" && "error" in payload) {
+          message = String(payload.error || message);
+        }
+      } catch {
+        // Ignore non-JSON bodies and fall back to the raw text below.
+      }
     }
 
-    const text = await response.text().catch(() => "");
-    throw new Error(text || `Request failed (${response.status})`);
+    throw new Error(message || `Request failed (${response.status})`);
   }
 
   if (response.status === 204) return undefined as T;

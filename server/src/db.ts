@@ -3,6 +3,7 @@ import path from "path";
 import crypto from "crypto";
 import pg from "pg";
 import type { AppConfig, EntityConfig, User } from "./types";
+import { getEntityKey } from "./config";
 
 type Row = Record<string, unknown> & { id: string; user_id?: string; created_at?: string; updated_at?: string };
 
@@ -37,7 +38,7 @@ export class Database {
     } catch {
       await this.flush();
     }
-    for (const entity of this.config.entities || []) this.store.entities[entity.name || "items"] ||= [];
+    for (const entity of this.config.entities || []) this.store.entities[getEntityKey(entity) || "items"] ||= [];
   }
 
   async close() {
@@ -76,15 +77,25 @@ export class Database {
   }
 
   private async ensureEntityTable(entity: EntityConfig) {
-    const name = entity.name || "items";
+    const name = getEntityKey(entity) || "items";
     await this.query(`
       create table if not exists app_${name} (
         id text primary key,
-        user_id text,
+        user_id text not null,
         data jsonb not null default '{}',
         created_at timestamptz not null,
         updated_at timestamptz not null
       )`);
+  }
+
+  private async ensureEntityReady(entity: EntityConfig) {
+    const name = getEntityKey(entity) || "items";
+    if (this.pool) {
+      await this.ensureEntityTable(entity);
+      return name;
+    }
+    this.store.entities[name] ||= [];
+    return name;
   }
 
   private async query<T extends pg.QueryResultRow = Row>(sql: string, params: unknown[] = []) {
@@ -127,25 +138,25 @@ export class Database {
   }
 
   async list(entity: EntityConfig, userId: string) {
-    const name = entity.name || "items";
+    const name = getEntityKey(entity) || "items";
+    await this.ensureEntityReady(entity);
     if (this.pool) {
-      const rows = await this.query(`select id, user_id, data, created_at, updated_at from app_${name} where ($1::text is null or user_id=$1) order by created_at desc`, [
-        entity.userScoped === false ? null : userId
-      ]);
+      const rows = await this.query(`select id, user_id, data, created_at, updated_at from app_${name} where user_id=$1 order by created_at desc`, [userId]);
       return rows.map((row) => ({ id: row.id, ...(row.data as object), createdAt: row.created_at, updatedAt: row.updated_at }));
     }
     return (this.store.entities[name] || [])
-      .filter((row) => entity.userScoped === false || row.user_id === userId)
+      .filter((row) => row.user_id === userId)
       .map(({ user_id, created_at, updated_at, ...row }) => ({ ...row, createdAt: created_at, updatedAt: updated_at }));
   }
 
   async create(entity: EntityConfig, userId: string, data: Record<string, unknown>) {
     const row: Row = { id: crypto.randomUUID(), user_id: userId, ...data, created_at: now(), updated_at: now() };
-    const name = entity.name || "items";
+    const name = getEntityKey(entity) || "items";
+    await this.ensureEntityReady(entity);
     if (this.pool) {
       await this.query(`insert into app_${name} (id, user_id, data, created_at, updated_at) values ($1,$2,$3,$4,$5)`, [
         row.id,
-        entity.userScoped === false ? null : userId,
+        userId,
         data,
         row.created_at,
         row.updated_at
@@ -159,19 +170,21 @@ export class Database {
   }
 
   async update(entity: EntityConfig, userId: string, id: string, data: Record<string, unknown>) {
-    const name = entity.name || "items";
+    const name = getEntityKey(entity) || "items";
+    await this.ensureEntityReady(entity);
     if (this.pool) {
-      const existing = await this.query(`select data from app_${name} where id=$1 and ($2::text is null or user_id=$2)`, [
-        id,
-        entity.userScoped === false ? null : userId
-      ]);
+      const existing = await this.query<{ data: Record<string, unknown>; created_at: string }>(
+        `select data, created_at from app_${name} where id=$1 and user_id=$2`,
+        [id, userId]
+      );
       if (!existing[0]) return null;
       const merged = { ...(existing[0].data as object), ...data };
-      await this.query(`update app_${name} set data=$1, updated_at=$2 where id=$3`, [merged, now(), id]);
-      return { id, ...merged };
+      const updatedAt = now();
+      await this.query(`update app_${name} set data=$1, updated_at=$2 where id=$3 and user_id=$4`, [merged, updatedAt, id, userId]);
+      return { id, ...merged, createdAt: existing[0].created_at, updatedAt };
     }
     const rows = this.store.entities[name] || [];
-    const row = rows.find((item) => item.id === id && (entity.userScoped === false || item.user_id === userId));
+    const row = rows.find((item) => item.id === id && item.user_id === userId);
     if (!row) return null;
     Object.assign(row, data, { updated_at: now() });
     await this.flush();
@@ -179,16 +192,14 @@ export class Database {
   }
 
   async delete(entity: EntityConfig, userId: string, id: string) {
-    const name = entity.name || "items";
+    const name = getEntityKey(entity) || "items";
+    await this.ensureEntityReady(entity);
     if (this.pool) {
-      const rows = await this.query(`delete from app_${name} where id=$1 and ($2::text is null or user_id=$2) returning id`, [
-        id,
-        entity.userScoped === false ? null : userId
-      ]);
+      const rows = await this.query(`delete from app_${name} where id=$1 and user_id=$2 returning id`, [id, userId]);
       return Boolean(rows[0]);
     }
     const rows = this.store.entities[name] || [];
-    const index = rows.findIndex((item) => item.id === id && (entity.userScoped === false || item.user_id === userId));
+    const index = rows.findIndex((item) => item.id === id && item.user_id === userId);
     if (index === -1) return false;
     rows.splice(index, 1);
     await this.flush();

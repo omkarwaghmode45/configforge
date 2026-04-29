@@ -1,11 +1,15 @@
-import { type FormEvent, type ReactElement, useCallback, useEffect, useMemo, useState } from "react";
+import { createContext, type FormEvent, type ReactElement, useCallback, useContext, useEffect, useMemo, useState } from "react";
 import { api } from "./api";
 import type { AppConfig, EntityConfig, FieldConfig, Session } from "./types";
 
 type Screen = { kind: "dashboard" } | { kind: "entity"; entity: string } | { kind: "notifications" };
 type NavigationItem = { label?: string | Record<string, string>; labelKey?: string; entity?: string; view?: string; path: string };
+type ConfigOption = { key: string; name: string };
 type TFunction = (key: string, fallback?: string) => string;
-type FieldInputProps = { field: FieldConfig; value: unknown; onChange: (value: unknown) => void; label: string; t: TFunction };
+type FieldInputProps = { field: FieldConfig; value: unknown; onChange: (value: unknown) => void; label: string; t: TFunction; currentLanguage?: string; passwordVisible?: boolean; onTogglePassword?: () => void };
+type LanguageContextValue = { currentLanguage: string; setCurrentLanguage: (value: string) => void };
+
+const LanguageContext = createContext<LanguageContextValue | null>(null);
 
 const languageNames: Record<string, string> = {
   en: "English",
@@ -13,6 +17,7 @@ const languageNames: Record<string, string> = {
 };
 
 const LOCALE_STORAGE_KEY = "configforge.locale";
+const DEFAULT_CONFIG_KEY = "app";
 
 const savedSession = () => {
   try {
@@ -38,29 +43,142 @@ const storeLocale = (locale: string) => {
   }
 };
 
-function useConfig() {
+const getConfigKeyFromUrl = () => {
+  try {
+    return new URLSearchParams(window.location.search).get("config") || DEFAULT_CONFIG_KEY;
+  } catch {
+    return DEFAULT_CONFIG_KEY;
+  }
+};
+
+const setConfigKeyInUrl = (configKey: string) => {
+  try {
+    const nextUrl = new URL(window.location.href);
+    if (configKey === DEFAULT_CONFIG_KEY) nextUrl.searchParams.delete("config");
+    else nextUrl.searchParams.set("config", configKey);
+    window.history.replaceState(null, "", `${nextUrl.pathname}${nextUrl.search}${nextUrl.hash}`);
+  } catch {
+    // Ignore history updates if the URL cannot be rewritten.
+  }
+};
+
+function translateText(value: unknown, currentLanguage: string, fallback: string) {
+  if (typeof value === "string" && value.trim()) return value;
+  if (value && typeof value === "object") {
+    const labels = value as Record<string, string>;
+    return labels[currentLanguage] || labels.en || Object.values(labels).find(Boolean) || fallback;
+  }
+  return fallback;
+}
+
+function getEntityKey(entity: EntityConfig) {
+  const rawKey = entity.key || (typeof entity.name === "string" ? entity.name : translateText(entity.name, "en", "item"));
+  return String(rawKey).trim().toLowerCase().replace(/[^a-z0-9_]/g, "_").replace(/^_+|_+$/g, "") || "item";
+}
+
+function getEntityDisplayName(entity: EntityConfig, currentLanguage: string) {
+  return translateText(entity.name, currentLanguage, translateText(entity.label, currentLanguage, getEntityKey(entity)));
+}
+
+function getOptionValue(option: string | { value: string; label?: string | Record<string, string> }) {
+  return typeof option === "string" ? option : option.value;
+}
+
+function getOptionLabel(option: string | { value: string; label?: string | Record<string, string> }, currentLanguage: string) {
+  return typeof option === "string" ? option : translateText(option.label, currentLanguage, option.value);
+}
+
+function translateFieldValue(field: FieldConfig, value: unknown, currentLanguage: string) {
+  if (field.type === "select" && Array.isArray(field.options)) {
+    const option = field.options.find((item) => getOptionValue(item) === String(value));
+    if (option) return getOptionLabel(option, currentLanguage);
+  }
+  return String(value ?? "");
+}
+
+// Unified translation helper - use this everywhere for consistent translations!
+function tt(label: unknown, lang: string): string {
+  if (!label) return "";
+  if (typeof label === "string") return label;
+  if (typeof label === "object") {
+    const record = label as Record<string, string>;
+    return record[lang] || record.en || Object.values(record).find(Boolean) || "";
+  }
+  return String(label);
+}
+
+function useLanguage() {
+  const context = useContext(LanguageContext);
+  if (!context) throw new Error("LanguageContext is unavailable");
+  return context;
+}
+
+function useConfig(configKey: string) {
   const [config, setConfig] = useState<AppConfig | null>(null);
   const [error, setError] = useState("");
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    let active = true;
+    setLoading(true);
+    setError("");
     api<AppConfig>("/api/config")
       .then((loadedConfig) => {
-        console.log("[ConfigForge] loaded config", loadedConfig);
-        console.log("[ConfigForge] loaded entities", loadedConfig.entities?.map((entity) => entity.name) || []);
-        console.log("[ConfigForge] products entity", loadedConfig.entities?.find((entity) => entity.name === "products") || null);
-        setConfig(loadedConfig);
+        if (active) {
+          // Validate critical config fields
+          if (!loadedConfig || typeof loadedConfig !== "object") {
+            setError("Invalid config: not an object");
+            console.warn("Invalid config detected: config is not an object. Applying fallback");
+          } else {
+            setConfig(loadedConfig);
+          }
+        }
       })
-      .catch((err) => setError(err.message));
+      .catch((err) => {
+        if (active) {
+          const errorMsg = err instanceof Error ? err.message : "Unknown error loading config";
+          setError(errorMsg);
+          console.warn(`Invalid config detected: ${errorMsg}. Applying fallback.`);
+        }
+      })
+      .finally(() => {
+        if (active) setLoading(false);
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [configKey]);
+
+  return { config, error, loading };
+}
+
+function useConfigOptions() {
+  const [configs, setConfigs] = useState<ConfigOption[]>([]);
+
+  useEffect(() => {
+    api<{ configs: ConfigOption[] }>("/api/configs")
+      .then((data) => setConfigs(data.configs || []))
+      .catch(() => setConfigs([]));
   }, []);
 
-  return { config, error };
+  return configs;
 }
 
 function App() {
-  const { config, error } = useConfig();
+  const [configKey, setConfigKey] = useState(() => getConfigKeyFromUrl());
+  const configOptions = useConfigOptions();
+  const { config, error, loading } = useConfig(configKey);
   const [session, setSession] = useState<Session | null>(() => savedSession());
   const [screen, setScreen] = useState<Screen>({ kind: "dashboard" });
-  const [lang, setLang] = useState(() => getStoredLocale() || "en");
+  const [currentLanguage, setCurrentLanguage] = useState(() => getStoredLocale() || "en");
+
+  useEffect(() => {
+    const syncConfigKey = () => setConfigKey(getConfigKeyFromUrl());
+    window.addEventListener("popstate", syncConfigKey);
+    return () => window.removeEventListener("popstate", syncConfigKey);
+  }, []);
+
   const localeKeys = useMemo(() => Object.keys(config?.app?.locales || { en: {} }), [config?.app?.locales]);
 
   useEffect(() => {
@@ -70,35 +188,38 @@ function App() {
     const defaultLocale = config.app?.defaultLocale;
 
     if (storedLocale && localeKeys.includes(storedLocale)) {
-      if (storedLocale !== lang) setLang(storedLocale);
+      if (storedLocale !== currentLanguage) setCurrentLanguage(storedLocale);
       return;
     }
 
-    if (localeKeys.includes(lang)) return;
+    if (localeKeys.includes(currentLanguage)) return;
 
     const nextLocale = (defaultLocale && localeKeys.includes(defaultLocale)) ? defaultLocale : localeKeys[0];
     if (!nextLocale) return;
-    setLang(nextLocale);
+    setCurrentLanguage(nextLocale);
     storeLocale(nextLocale);
-  }, [config, lang, localeKeys]);
+  }, [config, currentLanguage, localeKeys]);
 
   const localeStrings = useMemo(() => {
     if (!config?.app?.locales) return {} as Record<string, string>;
-    const selected = config.app.locales[lang];
+    const selected = config.app.locales[currentLanguage];
     if (selected) return selected;
 
     const defaultLocale = config.app.defaultLocale;
     if (defaultLocale && config.app.locales[defaultLocale]) return config.app.locales[defaultLocale];
 
     return {} as Record<string, string>;
-  }, [config?.app?.defaultLocale, config?.app?.locales, lang]);
-
-  console.log("Current language:", lang);
+  }, [config?.app?.defaultLocale, config?.app?.locales, currentLanguage]);
 
   const t: TFunction = (key, fallback = key) => localeStrings[key] || fallback;
-  const labelFor = (value: unknown, fallback: string) => resolveLabel(value, lang, fallback);
+  const fallbackT: TFunction = (_key, fallback = _key) => fallback;
+  const uiT = config ? t : fallbackT;
   const entities = config?.entities || [];
   const navigationItems = useMemo(() => buildNavigation(config, entities), [config, entities]);
+  const appTitle = config?.app?.name || "Generated App";
+  const subtitle = config ? t("app.subtitle", "Generated app from JSON config") : "Switch configs to continue";
+  const selectedConfigKey = getConfigKeyFromUrl();
+
   // Toast system
   const [toasts, setToasts] = useState<Array<{ id: string; type: "success" | "error"; message: string }>>([]);
   const pushToast = (type: "success" | "error", message: string) => {
@@ -112,8 +233,14 @@ function App() {
   };
 
   function handleLocaleChange(nextLocale: string) {
-    setLang(nextLocale);
+    setCurrentLanguage(nextLocale);
     storeLocale(nextLocale);
+  }
+
+  function handleConfigChange(nextConfigKey: string) {
+    setConfigKey(nextConfigKey);
+    setConfigKeyInUrl(nextConfigKey);
+    setScreen({ kind: "dashboard" });
   }
 
   useEffect(() => {
@@ -130,8 +257,43 @@ function App() {
     else localStorage.removeItem("session");
   }
 
-  if (error) return <State title="Configuration failed" detail={error} />;
-  if (!config) return <State title="Loading app runtime" detail="Reading JSON configuration..." />;
+  if (error) {
+    return (
+      <LanguageContext.Provider value={{ currentLanguage, setCurrentLanguage }}>
+      <div className="shell">
+        <aside className="sidebar">
+          <div>
+            <h1>Generated App</h1>
+            <p>{fallbackT("ui.switch_configs", "Switch configs to continue")}</p>
+          </div>
+          <RuntimeConfigPicker configs={configOptions} value={selectedConfigKey} onChange={handleConfigChange} currentLanguage={currentLanguage} />
+        </aside>
+        <main>
+          <State title={fallbackT("error.config", "Configuration failed")} detail={error} />
+        </main>
+      </div>
+      </LanguageContext.Provider>
+    );
+  }
+
+  if (loading || !config) {
+    return (
+      <LanguageContext.Provider value={{ currentLanguage, setCurrentLanguage }}>
+      <div className="shell">
+        <aside className="sidebar">
+          <div>
+            <h1>Generated App</h1>
+            <p>{fallbackT("state.loading_config", "Loading runtime configuration...")}</p>
+          </div>
+          <RuntimeConfigPicker configs={configOptions} value={selectedConfigKey} onChange={handleConfigChange} currentLanguage={currentLanguage} />
+        </aside>
+        <main>
+          <State title={fallbackT("state.loading_config", "Loading app runtime")} detail={fallbackT("state.reading_config", "Reading JSON configuration...")} />
+        </main>
+      </div>
+      </LanguageContext.Provider>
+    );
+  }
   // If authentication is enabled, require explicit login/signup.
   if (config.auth?.enabled !== false) {
     if (!session) {
@@ -139,7 +301,7 @@ function App() {
       if (window.location.pathname !== "/login") {
         window.history.replaceState(null, "", "/login");
       }
-      return <Auth config={config} lang={lang} onSession={persist} t={t} />;
+      return <Auth config={config} currentLanguage={currentLanguage} onSession={persist} t={t} />;
     }
     // If the user is authenticated but currently on /login, redirect to root
     if (session && window.location.pathname === "/login") {
@@ -148,23 +310,35 @@ function App() {
   }
 
   return (
+    <LanguageContext.Provider value={{ currentLanguage, setCurrentLanguage }}>
     <div className="shell">
       <Toasts toasts={toasts} />
       <aside className="sidebar">
         <div>
-          <h1>{config.app?.name || "ConfigForge"}</h1>
-          <p>{t("app.subtitle")}</p>
+          <h1>{tt(config?.app?.name, currentLanguage) || "Generated App"}</h1>
+          <p>{subtitle}</p>
         </div>
+        <RuntimeConfigPicker configs={configOptions} value={configKey} onChange={handleConfigChange} currentLanguage={currentLanguage} />
         <nav>
-          {navigationItems.map((item, index) => (
-            <button key={`${item.path}-${index}`} className={isActive(screen, item) ? "active" : ""} onClick={() => navigateTo(item)}>
-              {item.labelKey ? t(item.labelKey) : labelFor(item.label || entities.find((entity) => entity.name === item.entity)?.label, item.entity || item.view || "View")}
-            </button>
-          ))}
+          <h2>{uiT("nav.entities", "Entities")}</h2>
+          {navigationItems.map((item, index) => {
+            const displayLabel = item.labelKey
+              ? uiT(item.labelKey)
+              : item.label
+              ? tt(item.label, currentLanguage)
+              : item.entity
+              ? tt(entities.find((entity) => getEntityKey(entity) === item.entity)?.name, currentLanguage) || item.entity
+              : item.view || "View";
+            return (
+              <button key={`${item.path}-${index}`} className={isActive(screen, item) ? "active" : ""} onClick={() => navigateTo(item)}>
+                {displayLabel}
+              </button>
+            );
+          })}
         </nav>
         <div className="sidebarFooter">
           {localeKeys.length > 1 && (
-            <select value={lang} onChange={(event) => handleLocaleChange(event.target.value)} aria-label={t("label.language")}>
+            <select value={currentLanguage} onChange={(event) => handleLocaleChange(event.target.value)} aria-label={uiT("label.language", "Language")}>
               {localeKeys.map((item) => (
                 <option key={item} value={item}>
                   {languageNames[item] || item}
@@ -172,15 +346,16 @@ function App() {
               ))}
             </select>
           )}
-          <button onClick={() => persist(null)}>{t("auth.signout")}</button>
+          <button onClick={() => persist(null)}>{uiT("auth.signout", "Sign out")}</button>
         </div>
       </aside>
       <main>
-        {screen.kind === "dashboard" && <Dashboard config={config} entities={entities} session={session} lang={lang} t={t} />}
-        {screen.kind === "entity" && <DynamicEntityPage entity={entities.find((item) => item.name === screen.entity)} session={session} lang={lang} t={t} toast={toast} />}
-        {screen.kind === "notifications" && <Notifications session={session} t={t} />}
+        {screen.kind === "dashboard" && <Dashboard config={config} entities={entities} session={session} currentLanguage={currentLanguage} t={uiT} />}
+        {screen.kind === "entity" && <DynamicEntityPage entity={entities.find((item) => getEntityKey(item) === screen.entity)} session={session} currentLanguage={currentLanguage} t={uiT} toast={toast} />}
+        {screen.kind === "notifications" && <Notifications session={session} t={uiT} currentLanguage={currentLanguage} />}
       </main>
     </div>
+    </LanguageContext.Provider>
   );
 
   function navigateTo(item: NavigationItem) {
@@ -197,16 +372,32 @@ function buildNavigation(config: AppConfig | null, entities: EntityConfig[]): Na
   }));
   const existingEntityItems = new Set(configured.map((item) => item.entity).filter(Boolean));
   const generatedEntityItems = entities
-    .filter((entity) => entity.name && !existingEntityItems.has(entity.name))
-    .map((entity) => ({ entity: entity.name, path: `/${entity.name}` }));
+    .filter((entity) => getEntityKey(entity) && !existingEntityItems.has(getEntityKey(entity)))
+    .map((entity) => ({ entity: getEntityKey(entity), path: `/${getEntityKey(entity)}` }));
   const hasDashboard = configured.some((item) => item.view === "dashboard");
   const hasNotifications = configured.some((item) => item.view === "notifications");
   return [
-    ...(hasDashboard ? [] : [{ labelKey: "nav.dashboard", view: "dashboard", path: "/" }]),
+    ...(hasDashboard ? [] : [{ labelKey: "nav.entities", view: "dashboard", path: "/" }]),
     ...configured,
     ...generatedEntityItems,
     ...(hasNotifications ? [] : [{ labelKey: "nav.notifications", view: "notifications", path: "/notifications" }])
   ];
+}
+
+function RuntimeConfigPicker({ configs, value, onChange, currentLanguage }: { configs: ConfigOption[]; value: string; onChange: (configKey: string) => void; currentLanguage: string }) {
+  if (configs.length <= 1) return null;
+  return (
+    <label className="configPicker">
+      <span>Config</span>
+      <select value={value} onChange={(event) => onChange(event.target.value)} aria-label="Select configuration">
+        {configs.map((config) => (
+          <option key={config.key} value={config.key}>
+            {tt(config.name, currentLanguage) || config.key}
+          </option>
+        ))}
+      </select>
+    </label>
+  );
 }
 
 function Toasts({ toasts }: { toasts: Array<{ id: string; type: "success" | "error"; message: string }> }) {
@@ -225,87 +416,210 @@ function routeToScreen(entities: EntityConfig[]): Screen {
   const segment = window.location.pathname.replace(/^\/+/, "").split("/")[0];
   if (!segment) return { kind: "dashboard" };
   if (segment === "notifications") return { kind: "notifications" };
-  if (entities.some((entity) => entity.name === segment)) return { kind: "entity", entity: segment };
+  if (entities.some((entity) => getEntityKey(entity) === segment)) return { kind: "entity", entity: segment };
   return { kind: "dashboard" };
-}
-
-function resolveLabel(value: unknown, lang: string, fallback: string) {
-  if (typeof value === "string" && value.trim()) return value;
-  if (value && typeof value === "object") {
-    const labels = value as Record<string, string>;
-    return labels[lang] || labels.en || Object.values(labels).find(Boolean) || fallback;
-  }
-  return fallback;
 }
 
 function isActive(screen: Screen, item: { entity?: string; view?: string }) {
   return (screen.kind === "entity" && item.entity === screen.entity) || (screen.kind === "notifications" && item.view === "notifications") || (screen.kind === "dashboard" && item.view === "dashboard");
 }
 
-function Auth({ config, lang, onSession, t }: { config: AppConfig; lang: string; onSession: (session: Session) => void; t: TFunction }) {
+function Auth({ config, currentLanguage, onSession, t }: { config: AppConfig; currentLanguage: string; onSession: (session: Session) => void; t: TFunction }) {
   const [mode, setMode] = useState<"login" | "signup">("login");
-  const [form, setForm] = useState<Record<string, string>>({ email: "", password: "" });
+  const [authMethod, setAuthMethod] = useState<string>("password");
+  const [form, setForm] = useState<Record<string, string>>({ email: "", password: "", code: "" });
+  const [showPasswords, setShowPasswords] = useState<Record<string, boolean>>({});
   const [error, setError] = useState("");
+  const [otpStep, setOtpStep] = useState<"email" | "code">("email");
+  const [loading, setLoading] = useState(false);
+
+  const availableMethods = config.auth?.methods || ["email"];
   const fields = config.auth?.fields?.length ? config.auth.fields : [{ name: "email", label: "Email", type: "email" }, { name: "password", label: "Password", type: "password" }];
 
-  async function submit() {
+  async function submitPassword() {
     setError("");
+    setLoading(true);
     try {
       const session = await api<Session & { token: string; user: Session["user"] }>(`/api/auth/${mode}`, { method: "POST", body: JSON.stringify(form) });
       onSession(session);
     } catch (err) {
       setError(err instanceof Error ? err.message : t("error.auth"));
+    } finally {
+      setLoading(false);
     }
   }
+
+  async function sendOTP() {
+    setError("");
+    setLoading(true);
+    try {
+      await api<{ message: string }>("/api/auth/send-otp", { method: "POST", body: JSON.stringify({ email: form.email }) });
+      setOtpStep("code");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to send OTP");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function verifyOTP() {
+    setError("");
+    setLoading(true);
+    try {
+      const session = await api<Session & { token: string; user: Session["user"] }>("/api/auth/verify-otp", { method: "POST", body: JSON.stringify({ email: form.email, code: form.code }) });
+      onSession(session);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Invalid OTP");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  const isPasswordMethod = authMethod === "password";
+  const isOTPMethod = authMethod === "otp";
 
   return (
     <div className="authPage">
       <section className="authPanel">
-        <h1>{config.app?.name || "ConfigForge"}</h1>
+        <h1>{config.app?.name || "Generated App"}</h1>
         <p>{t("app.subtitle")}</p>
-        <div className="segmented">
-          <button className={mode === "login" ? "active" : ""} onClick={() => setMode("login")}>{t("auth.signin")}</button>
-          <button className={mode === "signup" ? "active" : ""} onClick={() => setMode("signup")}>{t("auth.signup")}</button>
-        </div>
-        {fields.map((field) => (
-          <DynamicFieldInput key={field.name} field={field} value={form[field.name] || ""} lang={lang} t={t} onChange={(value) => setForm((prev) => ({ ...prev, [field.name]: String(value) }))} />
-        ))}
-        {error && <p className="error">{error}</p>}
-        <button className="primary" onClick={submit}>{mode === "login" ? t("btn.continue") : t("auth.signup")}</button>
-        {config.auth?.methods?.includes("demo") && <button onClick={() => api<Session>("/api/auth/demo", { method: "POST" }).then(onSession)}>{t("auth.demo")}</button>}
+
+        {/* Auth Method Selector - only show if multiple methods available */}
+        {availableMethods.length > 1 && (
+          <div className="segmented">
+            {availableMethods.includes("password") && (
+              <button className={authMethod === "password" ? "active" : ""} onClick={() => { setAuthMethod("password"); setOtpStep("email"); setError(""); }}>
+                {t("auth.method_password", "Password")}
+              </button>
+            )}
+            {availableMethods.includes("otp") && (
+              <button className={authMethod === "otp" ? "active" : ""} onClick={() => { setAuthMethod("otp"); setOtpStep("email"); setError(""); }}>
+                {t("auth.method_otp", "OTP")}
+              </button>
+            )}
+          </div>
+        )}
+
+        {/* Mode Selector (Login/Signup) - only for password method or when available */}
+        {(isPasswordMethod || !isOTPMethod) && (
+          <div className="segmented">
+            <button className={mode === "login" ? "active" : ""} onClick={() => setMode("login")}>{t("auth.signin")}</button>
+            <button className={mode === "signup" ? "active" : ""} onClick={() => setMode("signup")}>{t("auth.signup")}</button>
+          </div>
+        )}
+
+        {/* Password Login/Signup */}
+        {isPasswordMethod && (
+          <>
+            {fields.map((field) => (
+              <DynamicFieldInput
+                key={field.name}
+                field={field}
+                value={form[field.name] || ""}
+                currentLanguage={currentLanguage}
+                t={t}
+                passwordVisible={!!showPasswords[field.name]}
+                onTogglePassword={field.type === "password" ? () => setShowPasswords((prev) => ({ ...prev, [field.name]: !prev[field.name] })) : undefined}
+                onChange={(value) => setForm((prev) => ({ ...prev, [field.name]: String(value) }))}
+              />
+            ))}
+            {error && <p className="error">{error}</p>}
+            <button className="primary" onClick={submitPassword} disabled={loading}>
+              {loading ? t("state.saving") : (mode === "login" ? t("btn.continue") : t("auth.signup"))}
+            </button>
+          </>
+        )}
+
+        {/* OTP Login */}
+        {isOTPMethod && (
+          <>
+            {otpStep === "email" && (
+              <>
+                <DynamicFieldInput
+                  field={{ name: "email", type: "email", label: { en: "Email", hi: "ईमेल" }, required: true }}
+                  value={form.email}
+                  currentLanguage={currentLanguage}
+                  t={t}
+                  onChange={(value) => setForm((prev) => ({ ...prev, email: String(value) }))}
+                />
+                {error && <p className="error">{error}</p>}
+                <button className="primary" onClick={sendOTP} disabled={!form.email || loading}>
+                  {loading ? t("state.saving") : t("auth.send_otp", "Send OTP")}
+                </button>
+              </>
+            )}
+            {otpStep === "code" && (
+              <>
+                <p style={{ fontSize: "0.9em", color: "#666", marginBottom: 8 }}>
+                  {t("auth.otp_sent", "OTP sent to")} {form.email}
+                </p>
+                <DynamicFieldInput
+                  field={{ name: "code", type: "text", label: { en: "Enter OTP", hi: "OTP दर्ज करें" }, required: true }}
+                  value={form.code}
+                  currentLanguage={currentLanguage}
+                  t={t}
+                  onChange={(value) => setForm((prev) => ({ ...prev, code: String(value) }))}
+                />
+                {error && <p className="error">{error}</p>}
+                <div className="row gap" style={{ gap: 8 }}>
+                  <button onClick={() => { setOtpStep("email"); setForm((prev) => ({ ...prev, code: "" })); setError(""); }}>
+                    {t("btn.cancel")}
+                  </button>
+                  <button className="primary" onClick={verifyOTP} disabled={!form.code || loading} style={{ flex: 1 }}>
+                    {loading ? t("state.saving") : t("btn.continue")}
+                  </button>
+                </div>
+              </>
+            )}
+          </>
+        )}
       </section>
     </div>
   );
 }
 
-function Dashboard({ config, entities, session, lang, t }: { config: AppConfig; entities: EntityConfig[]; session: Session | null; lang: string; t: TFunction }) {
+function Dashboard({ config, entities, session, currentLanguage, t }: { config: AppConfig; entities: EntityConfig[]; session: Session | null; currentLanguage: string; t: TFunction }) {
   const view = config.ui?.views?.find((item) => item.type === "dashboard");
   const widgets = Array.isArray(view?.widgets) ? (view.widgets as Array<Record<string, unknown>>) : [];
+  const pageTitle = tt(view?.title, currentLanguage) || t("page.entities") || "Entities";
   return (
     <div className="stack">
-      <header><h2>{resolveLabel(view?.title, lang, t("page.dashboard"))}</h2></header>
+      <header><h2>{pageTitle}</h2></header>
       <div className="widgetGrid">
         {widgets.map((widget, index) => (
-          <Widget key={index} widget={widget} entity={entities.find((item) => item.name === widget.entity)} session={session} lang={lang} t={t} />
+          <Widget key={index} widget={widget} entity={entities.find((item) => getEntityKey(item) === widget.entity)} session={session} currentLanguage={currentLanguage} t={t} />
         ))}
       </div>
     </div>
   );
 }
 
-function Widget({ widget, entity, session, lang, t }: { widget: Record<string, unknown>; entity?: EntityConfig; session: Session | null; lang: string; t: TFunction }) {
+function Widget({ widget, entity, session, currentLanguage, t }: { widget: Record<string, unknown>; entity?: EntityConfig; session: Session | null; currentLanguage: string; t: TFunction }) {
   const [items, setItems] = useState<Record<string, unknown>[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
   useEffect(() => {
-    if (entity) api<{ items: Record<string, unknown>[] }>(`/api/entities/${entity.name}`, {}, session).then((data) => setItems(data.items)).catch(() => setItems([]));
+    if (!entity) return;
+    setLoading(true);
+    setError("");
+    api<{ items: Record<string, unknown>[] }>(`/api/entities/${getEntityKey(entity)}`, {}, session)
+      .then((data) => setItems(data.items))
+      .catch((err) => setError(err instanceof Error ? err.message : t("error.load")))
+      .finally(() => setLoading(false));
   }, [entity?.name, session?.token]);
   if (!entity) return <section className="panel">{t("entity.unknown")}</section>;
-  const title = resolveLabel(widget.label, lang, resolveLabel(entity.label, lang, entity.name));
+  const rawWidgetLabel = widget.label as unknown;
+  const widgetLabel = rawWidgetLabel && typeof rawWidgetLabel === "object" ? tt(rawWidgetLabel, currentLanguage) : "";
+  const entityName = tt(entity.name, currentLanguage);
+  const title = widgetLabel || entityName;
+  if (loading) return <section className="panel"><h3>{title}</h3><State title={t("state.loading_records")} /></section>;
+  if (error) return <section className="panel"><h3>{title}</h3><p className="error">{error}</p></section>;
   if (widget.type === "metric") return <section className="panel metric"><span>{title}</span><strong>{items.length}</strong></section>;
-  if (widget.type === "table") return <section className="panel wide"><h3>{title}</h3><DataTable entity={entity} items={items} lang={lang} t={t} /></section>;
+  if (widget.type === "table") return <section className="panel wide"><h3>{title}</h3><DataTable entity={entity} items={items} currentLanguage={currentLanguage} t={t} /></section>;
   return <section className="panel">{t("widget.unsupported")}: {String(widget.type || "unknown")}</section>;
 }
 
-function DynamicEntityPage({ entity, session, lang, t, toast }: { entity?: EntityConfig; session: Session | null; lang: string; t: TFunction; toast?: { success: (msg: string) => void; error: (msg: string) => void } }) {
+function DynamicEntityPage({ entity, session, currentLanguage, t, toast }: { entity?: EntityConfig; session: Session | null; currentLanguage: string; t: TFunction; toast?: { success: (msg: string) => void; error: (msg: string) => void } }) {
   const [items, setItems] = useState<Record<string, unknown>[]>([]);
   const [editing, setEditing] = useState<Record<string, unknown> | null>(null);
   const [error, setError] = useState("");
@@ -318,7 +632,7 @@ function DynamicEntityPage({ entity, session, lang, t, toast }: { entity?: Entit
     setLoading(true);
     setError("");
     try {
-      const data = await api<{ items: Record<string, unknown>[] }>(`/api/entities/${entity.name}`, {}, session);
+      const data = await api<{ items: Record<string, unknown>[] }>(`/api/entities/${getEntityKey(entity)}`, {}, session);
       setItems(data.items);
     } catch (err) {
       setError(err instanceof Error ? err.message : t("error.load"));
@@ -330,7 +644,7 @@ function DynamicEntityPage({ entity, session, lang, t, toast }: { entity?: Entit
   useEffect(() => { void load(); }, [load]);
   if (!entity) return <State title={t("screen.unknown")} detail={t("entity.missing")} />;
 
-  const entityLabel = resolveLabel(entity.label, lang, entity.name);
+  const entityLabel = tt(entity.name, currentLanguage) || tt(entity.label, currentLanguage) || getEntityKey(entity);
 
   return (
     <div className="stack">
@@ -341,11 +655,11 @@ function DynamicEntityPage({ entity, session, lang, t, toast }: { entity?: Entit
         <h3>{t("btn.create")} {entityLabel}</h3>
         <DynamicForm
           entity={entity}
-          lang={lang}
+          currentLanguage={currentLanguage}
           t={t}
           submitKey="btn.create"
           onSubmit={async (values) => {
-            const created = await api<{ item: Record<string, unknown> }>(`/api/entities/${entity.name}`, { method: "POST", body: JSON.stringify(values) }, session);
+            const created = await api<{ item: Record<string, unknown> }>(`/api/entities/${getEntityKey(entity)}`, { method: "POST", body: JSON.stringify(values) }, session);
             setItems((prev) => [created.item, ...prev]);
             await load();
           }}
@@ -363,7 +677,7 @@ function DynamicEntityPage({ entity, session, lang, t, toast }: { entity?: Entit
             onEdit={setEditing}
             onDelete={(id: string) => setConfirming({ id })}
             deletingId={deletingId}
-            lang={lang}
+            currentLanguage={currentLanguage}
             t={t}
           />
 
@@ -381,7 +695,7 @@ function DynamicEntityPage({ entity, session, lang, t, toast }: { entity?: Entit
                       setConfirming(null);
                       setDeletingId(id);
                       try {
-                        await api(`/api/entities/${entity.name}/${id}`, { method: "DELETE" }, session);
+                        await api(`/api/entities/${getEntityKey(entity)}/${id}`, { method: "DELETE" }, session);
                         setItems((prev) => prev.filter((it) => String(it.id) !== String(id)));
                         toast?.success(t("toast.deleted", "Item deleted successfully"));
                       } catch (err) {
@@ -401,24 +715,24 @@ function DynamicEntityPage({ entity, session, lang, t, toast }: { entity?: Entit
           )}
         </>
       )}
-      {editing && <EntityForm entity={entity} item={editing} session={session} lang={lang} t={t} onClose={() => setEditing(null)} onSaved={() => { setEditing(null); load(); }} />}
+      {editing && <EntityForm entity={entity} item={editing} session={session} currentLanguage={currentLanguage} t={t} onClose={() => setEditing(null)} onSaved={() => { setEditing(null); load(); }} />}
     </div>
   );
 }
 
-function EntityForm({ entity, item, session, lang, t, onClose, onSaved }: { entity: EntityConfig; item: Record<string, unknown>; session: Session | null; lang: string; t: TFunction; onClose: () => void; onSaved: () => void }) {
+function EntityForm({ entity, item, session, currentLanguage, t, onClose, onSaved }: { entity: EntityConfig; item: Record<string, unknown>; session: Session | null; currentLanguage: string; t: TFunction; onClose: () => void; onSaved: () => void }) {
   return (
     <div className="modalBackdrop">
       <section className="modal">
-        <h3>{t("btn.edit")} {resolveLabel(entity.label, lang, entity.name)}</h3>
+        <h3>{t("btn.edit")} {getEntityDisplayName(entity, currentLanguage)}</h3>
         <DynamicForm
           entity={entity}
-          lang={lang}
+          currentLanguage={currentLanguage}
           t={t}
           initialValues={item}
           submitKey="btn.save"
           onSubmit={async (values) => {
-            await api(`/api/entities/${entity.name}/${item.id}`, { method: "PUT", body: JSON.stringify(values) }, session);
+            await api(`/api/entities/${getEntityKey(entity)}/${item.id}`, { method: "PUT", body: JSON.stringify(values) }, session);
             onSaved();
           }}
         />
@@ -428,20 +742,18 @@ function EntityForm({ entity, item, session, lang, t, onClose, onSaved }: { enti
   );
 }
 
-function DynamicForm({ entity, lang, t, initialValues = {}, submitKey, onSubmit }: { entity: EntityConfig; lang: string; t: TFunction; initialValues?: Record<string, unknown>; submitKey: string; onSubmit: (values: Record<string, unknown>) => Promise<void> }) {
-  const fields = entity.fields || [];
-  const [values, setValues] = useState<Record<string, unknown>>(() => buildInitialFormState(fields, initialValues));
+function DynamicForm({ entity, currentLanguage, t, initialValues = {}, submitKey, onSubmit }: { entity: EntityConfig; currentLanguage: string; t: TFunction; initialValues?: Record<string, unknown>; submitKey: string; onSubmit: (values: Record<string, unknown>) => Promise<void> }) {
+  const fields = useMemo(() => getRenderableFields(entity), [entity]);
+  const [formData, setFormData] = useState<Record<string, unknown>>({});
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
   const [formError, setFormError] = useState("");
   const [submitting, setSubmitting] = useState(false);
 
-  console.log(entity.fields);
-
   useEffect(() => {
-    setValues(buildInitialFormState(fields, initialValues));
+    setFormData(buildInitialFormState(fields, initialValues));
     setFieldErrors({});
     setFormError("");
-  }, [entity.name, fields, initialValues.id]);
+  }, [getEntityKey(entity), initialValues.id, fields]);
 
   if (!fields.length) {
     return <section className="empty">{t("form.no_fields")}</section>;
@@ -449,14 +761,14 @@ function DynamicForm({ entity, lang, t, initialValues = {}, submitKey, onSubmit 
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    const nextErrors = validateFields(fields, values, lang, t);
+    const nextErrors = validateFields(fields, formData, currentLanguage, t);
     setFieldErrors(nextErrors);
     setFormError("");
     if (Object.keys(nextErrors).length) return;
     setSubmitting(true);
     try {
-      await onSubmit(values);
-      if (!initialValues.id) setValues(buildInitialFormState(fields, {}));
+      await onSubmit(formData);
+      if (!initialValues.id) setFormData({});
     } catch (err) {
       setFormError(err instanceof Error ? err.message : t("error.submit"));
     } finally {
@@ -470,11 +782,11 @@ function DynamicForm({ entity, lang, t, initialValues = {}, submitKey, onSubmit 
         <DynamicFieldInput
           key={field.name}
           field={field}
-          value={values[field.name] ?? ""}
-          lang={lang}
+          value={formData[field.name] ?? ""}
+          currentLanguage={currentLanguage}
           t={t}
           error={fieldErrors[field.name]}
-          onChange={(value) => setValues((prev) => ({ ...prev, [field.name]: value }))}
+          onChange={(value) => setFormData((prev) => ({ ...prev, [field.name]: value }))}
         />
       ))}
       {formError && <p className="error">{formError}</p>}
@@ -489,23 +801,45 @@ function buildInitialFormState(fields: FieldConfig[], initialValues: Record<stri
   return Object.fromEntries(fields.map((field) => [field.name, initialValues[field.name] ?? field.default ?? ""]));
 }
 
-function validateFields(fields: FieldConfig[], values: Record<string, unknown>, lang: string, t: TFunction) {
+function getRenderableFields(entity: EntityConfig) {
+  const fields = entity.fields?.length ? entity.fields : [{ name: "title", label: "Title", type: "text", required: true }];
+  return fields.map((field) => ({
+    ...field,
+    type: field.type && componentMap[field.type] ? field.type : "text"
+  }));
+}
+
+function validateFields(fields: FieldConfig[], values: Record<string, unknown>, currentLanguage: string, t: TFunction) {
   const errors: Record<string, string> = {};
   for (const field of fields) {
     const value = values[field.name];
     if (field.required && (value === "" || value === null || value === undefined)) {
-      errors[field.name] = `${resolveLabel(field.label, lang, field.name)} ${t("validation.required")}`;
+      errors[field.name] = `${tt(field.label, currentLanguage) || field.name} ${t("validation.required")}`;
     }
   }
   return errors;
 }
 
-const TextInput = ({ field, value, onChange, label }: FieldInputProps) => <label>{label}<input required={field.required} type={field.type === "email" || field.type === "password" ? field.type : "text"} value={String(value)} onChange={(event) => onChange(event.target.value)} /></label>;
+const TextInput = ({ field, value, onChange, label, passwordVisible, onTogglePassword }: FieldInputProps) => {
+  const inputType = field.type === "password" ? (passwordVisible ? "text" : "password") : field.type === "email" ? "email" : field.type === "number" ? "number" : "text";
+  return (
+    <label>
+      {label}
+      <div className="inputWithAction">
+        <input required={field.required} type={inputType} value={String(value)} onChange={(event) => onChange(event.target.value)} />
+        {field.type === "password" && onTogglePassword && (
+          <button type="button" className="inputAction" onClick={onTogglePassword} aria-label={passwordVisible ? "Hide password" : "Show password"}>
+            👁
+          </button>
+        )}
+      </div>
+    </label>
+  );
+};
 const NumberInput = ({ field, value, onChange, label }: FieldInputProps) => <label>{label}<input required={field.required} type="number" value={String(value)} onChange={(event) => onChange(event.target.value)} /></label>;
-const SelectInput = ({ field, value, onChange, label, t }: FieldInputProps) => <label>{label}<select required={field.required} value={String(value)} onChange={(event) => onChange(event.target.value)}><option value="">{t("form.select")}</option>{(field.options || []).map((option) => <option key={option}>{option}</option>)}</select></label>;
+const SelectInput = ({ field, value, onChange, label, t, currentLanguage }: FieldInputProps) => <label>{label}<select required={field.required} value={String(value)} onChange={(event) => onChange(event.target.value)}><option value="">{t("form.select")}</option>{(field.options || []).map((option) => { const optionValue = getOptionValue(option); return <option key={optionValue} value={optionValue}>{getOptionLabel(option, currentLanguage || "en")}</option>; })}</select></label>;
 const TextArea = ({ field, value, onChange, label }: FieldInputProps) => <label>{label}<textarea required={field.required} value={String(value)} onChange={(event) => onChange(event.target.value)} /></label>;
 const DateInput = ({ field, value, onChange, label }: FieldInputProps) => <label>{label}<input required={field.required} type="date" value={String(value)} onChange={(event) => onChange(event.target.value)} /></label>;
-const UnknownInput = ({ field, label, t }: FieldInputProps) => <label>{label}<input disabled value={`${t("field.unsupported_type")}: ${field.type || "unknown"}`} readOnly /><span className="fieldWarning">{t("field.unsupported")}</span></label>;
 
 const componentMap: Record<string, (props: FieldInputProps) => ReactElement> = {
   text: TextInput,
@@ -517,15 +851,14 @@ const componentMap: Record<string, (props: FieldInputProps) => ReactElement> = {
   date: DateInput
 };
 
-function DynamicFieldInput({ field, value, onChange, lang, t, error }: { field: FieldConfig; value: unknown; onChange: (value: unknown) => void; lang: string; t: TFunction; error?: string }) {
-  const label = `${resolveLabel(field.label, lang, field.name)}${field.required ? " *" : ""}`;
-  const InputComponent = componentMap[field.type] || UnknownInput;
-  return <div className="fieldGroup"><InputComponent field={field} value={value} onChange={onChange} label={label} t={t} />{error && <span className="fieldError">{error}</span>}</div>;
+function DynamicFieldInput({ field, value, onChange, currentLanguage, t, error, passwordVisible, onTogglePassword }: { field: FieldConfig; value: unknown; onChange: (value: unknown) => void; currentLanguage: string; t: TFunction; error?: string; passwordVisible?: boolean; onTogglePassword?: () => void }) {
+  const label = `${tt(field.label, currentLanguage) || field.name}${field.required ? " *" : ""}`;
+  const InputComponent = componentMap[field.type] || TextInput;
+  return <div className="fieldGroup"><InputComponent field={field} value={value} onChange={onChange} label={label} t={t} currentLanguage={currentLanguage} passwordVisible={passwordVisible} onTogglePassword={onTogglePassword} />{error && <span className="fieldError">{error}</span>}</div>;
 }
 
-function DataTable({ entity, items, lang, t, onEdit, onDelete, deletingId }: { entity: EntityConfig; items: Record<string, unknown>[]; lang: string; t: TFunction; onEdit?: (item: Record<string, unknown>) => void; onDelete?: (id: string) => void; deletingId?: string | null }) {
-  const fields = entity.fields || [];
-  console.log("[ConfigForge] table fields", entity.name, fields);
+function DataTable({ entity, items, currentLanguage, t, onEdit, onDelete, deletingId }: { entity: EntityConfig; items: Record<string, unknown>[]; currentLanguage: string; t: TFunction; onEdit?: (item: Record<string, unknown>) => void; onDelete?: (id: string) => void; deletingId?: string | null }) {
+  const fields = getRenderableFields(entity);
   if (!fields.length) return <section className="empty">{t("table.no_columns")}</section>;
   if (!items.length) return <section className="empty">{t("table.empty")}</section>;
   return (
@@ -534,7 +867,7 @@ function DataTable({ entity, items, lang, t, onEdit, onDelete, deletingId }: { e
         <thead>
           <tr>
             {fields.map((field) => (
-              <th key={field.name}>{resolveLabel(field.label, lang, field.name)}</th>
+              <th key={field.name}>{tt(field.label, currentLanguage) || field.name}</th>
             ))}
             {(onEdit || onDelete) && <th />}
           </tr>
@@ -543,7 +876,7 @@ function DataTable({ entity, items, lang, t, onEdit, onDelete, deletingId }: { e
           {items.map((item) => (
             <tr key={String(item.id)}>
               {fields.map((field) => (
-                <td key={field.name}>{String(item[field.name] ?? "")}</td>
+                <td key={field.name}>{translateFieldValue(field, item[field.name], currentLanguage)}</td>
               ))}
               {(onEdit || onDelete) && (
                 <td>
@@ -574,7 +907,7 @@ function CsvImport({ entity, session, onDone, t }: { entity: EntityConfig; sessi
     if (!file) return;
     const data = new FormData();
     data.append("file", file);
-    const result = await api<{ imported: number; failures: unknown[] }>(`/api/entities/${entity.name}/import`, { method: "POST", body: data }, session);
+    const result = await api<{ imported: number; failures: unknown[] }>(`/api/entities/${getEntityKey(entity)}/import`, { method: "POST", body: data }, session);
     setMessage(`${t("csv.imported")} ${result.imported}${result.failures.length ? `, ${result.failures.length} ${t("csv.failed")}` : ""}`);
     onDone();
   }
@@ -583,13 +916,14 @@ function CsvImport({ entity, session, onDone, t }: { entity: EntityConfig; sessi
 
 function Notifications({ session, t }: { session: Session | null; t: TFunction }) {
   const [items, setItems] = useState<Record<string, unknown>[]>([]);
+  const { currentLanguage } = useLanguage();
   useEffect(() => { api<{ items: Record<string, unknown>[] }>("/api/notifications", {}, session).then((data) => setItems(data.items)); }, [session?.token]);
   return (
     <div className="stack">
       <h2>{t("nav.notifications")}</h2>
       {items.map((item) => (
         <section className="panel" key={String(item.id)}>
-          <strong>{String(item.message)}</strong>
+          <strong>{tt(item.message as unknown, currentLanguage)}</strong>
           <p>{String(item.type)} · {String(item.created_at || item.createdAt)}</p>
         </section>
       ))}
